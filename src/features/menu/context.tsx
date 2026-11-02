@@ -26,7 +26,8 @@ import type {
   ItemAvailabilityMark,
   MenuAvailabilityPageConfig,
 } from '@/lib/schemas/menu/menuAvailabilitySchema';
-import type { MenuItemListParams } from '@/lib/schemas/menu/menuItemsSchema';
+import type { MenuItemListParams, MenuItemResponse } from '@/lib/schemas/menu/menuItemsSchema';
+import type { BranchMenuItemRecord } from '@/lib/schemas/menu/branchMenuItemsSchema';
 import { showMenuItemWriteSuccessToast } from '@/lib/helpers/menuItemHelpers';
 import {
   createCategoryInputSchema,
@@ -40,7 +41,14 @@ import {
 import { resolveCatalogueContextIds } from '@/lib/helpers/apiContextHeaders';
 import { buildCreateMenuCategoryBody } from '@/lib/helpers/menuBranchContext';
 import { buildTagNameToIdMap } from '@/lib/helpers/createMenuItemFormData';
+import {
+  branchMenuItemOverlayMap,
+  mergeMenuItemWithBranchOverlay,
+} from '@/lib/helpers/menu/mergeBranchMenuItemOverlays';
+import { pickActiveBranchMenuAssignment } from '@/lib/helpers/menu/pickActiveBranchMenuAssignment';
 import { toCatalogDietary, toMenuCatalogItem } from '@/lib/helpers/menuItemHelpers';
+import { useBranchMenuItems } from '@/lib/hooks/menu/useBranchMenuItems';
+import { useBranchMenus } from '@/lib/hooks/menu/menus/menusHooks';
 import {
   useCreateMenuCategory,
   useMenuCategories,
@@ -56,7 +64,6 @@ import {
   useUpdateMenuItem,
 } from '@/lib/hooks/menu/useMenuItems';
 import type { UpdateMenuCategoryBody } from '@/lib/schemas/menu/menuCategoriesSchema';
-import type { MenuItemResponse } from '@/lib/schemas/menu/menuItemsSchema';
 import {
   pushMenuCreationList,
   pushMenuCreationView,
@@ -221,6 +228,26 @@ export function MenuCreationProvider({
   );
 
   const queryClient = useQueryClient();
+  const branchMenusQuery = useBranchMenus(
+    { page: 1, page_size: 50, status: 'active' },
+    branchIdForList,
+  );
+  const branchMenuAssignment = useMemo(
+    () =>
+      pageConfig.scope === 'branch'
+        ? pickActiveBranchMenuAssignment(branchMenusQuery.data?.items ?? [])
+        : null,
+    [branchMenusQuery.data?.items, pageConfig.scope],
+  );
+  const branchMenuItemsQuery = useBranchMenuItems(branchIdForList, branchMenuAssignment?.id, {
+    page: 1,
+    page_size: 500,
+  });
+  const overlayByMenuItemId = useMemo(
+    () => branchMenuItemOverlayMap(branchMenuItemsQuery.data?.items ?? []),
+    [branchMenuItemsQuery.data?.items],
+  );
+
   const categoriesQuery = useMenuCategories(MENU_LIST_PARAMS);
   const itemsQuery = useMenuItems(menuListParams);
   const catalogItemsQuery = useMenuItems(catalogListParams);
@@ -290,8 +317,12 @@ export function MenuCreationProvider({
 
   const items: MenuCatalogItem[] = useMemo(() => {
     if (localItems.length > 0) return localItems;
-    return (apiItems ?? []).map((item) => toMenuCatalogItem(item, categoryNameById));
-  }, [apiItems, categoryNameById, localItems]);
+    return (apiItems ?? []).map((item) =>
+      pageConfig.scope === 'branch'
+        ? mergeMenuItemWithBranchOverlay(item, categoryNameById, overlayByMenuItemId)
+        : toMenuCatalogItem(item, categoryNameById),
+    );
+  }, [apiItems, categoryNameById, localItems, overlayByMenuItemId, pageConfig.scope]);
 
   // Seed selection once API items arrive for view/edit deep links.
   if (
@@ -457,7 +488,8 @@ export function MenuCreationProvider({
         pushMenuCreationList();
       },
       toggleItemStatus: async (itemId, nextActive) => {
-        const numericId = Number(itemId);
+        const row = items.find((entry) => entry.id === itemId);
+        const numericId = row?.menuItemId ?? Number(itemId);
         if (!Number.isFinite(numericId) || numericId <= 0) {
           throw new ApiError('Invalid menu item id.', 400);
         }
@@ -465,6 +497,10 @@ export function MenuCreationProvider({
         await setMenuItemActive.mutateAsync({
           itemId: numericId,
           active: nextActive,
+          catalogueScope: row?.catalogueScope,
+          branchMenuItemId: row?.branchMenuItemId,
+          branchId: branchIdForList,
+          assignmentId: branchMenuAssignment?.id,
         });
 
         const nextStatus = nextActive ? 'Available' : 'Inactive';
@@ -709,9 +745,11 @@ function channelsForGroup(group: AvailabilityChannelGroup): AvailabilityChannel[
 function toAvailabilityItem(
   item: MenuItemResponse,
   categoryNameById: Map<string, string>,
+  overlay?: BranchMenuItemRecord,
 ): AvailabilityItem {
   const categoryId = String(item.category_id);
-  const isActive = item.status === 'active';
+  const isActive =
+    overlay != null ? overlay.status === 'active' && overlay.is_available : item.status === 'active';
   const tagNames = item.tags.map((t) => t.name).filter((name) => name.length > 0);
   const primaryTag = tagNames[0] ?? item.code ?? item.name;
   return {
@@ -730,6 +768,9 @@ function toAvailabilityItem(
     tag: primaryTag,
     tags: tagNames.length > 0 ? tagNames : [primaryTag],
     isHidden: !isActive,
+    menuItemId: item.id,
+    catalogueScope: item.catalogue_scope,
+    ...(overlay != null ? { branchMenuItemId: overlay.id } : {}),
   };
 }
 
@@ -797,6 +838,26 @@ export function MenuAvailabilityProvider({
     [branchIdForList],
   );
 
+  const branchMenusQuery = useBranchMenus(
+    { page: 1, page_size: 50, status: 'active' },
+    branchIdForList,
+  );
+  const branchMenuAssignment = useMemo(
+    () =>
+      pageConfig.scope === 'branch'
+        ? pickActiveBranchMenuAssignment(branchMenusQuery.data?.items ?? [])
+        : null,
+    [branchMenusQuery.data?.items, pageConfig.scope],
+  );
+  const branchMenuItemsQuery = useBranchMenuItems(branchIdForList, branchMenuAssignment?.id, {
+    page: 1,
+    page_size: 500,
+  });
+  const overlayByMenuItemId = useMemo(
+    () => branchMenuItemOverlayMap(branchMenuItemsQuery.data?.items ?? []),
+    [branchMenuItemsQuery.data?.items],
+  );
+
   // Same list APIs as Menu Creation: GET categories + GET menu items (with status / dietary filters).
   const categoriesQuery = useMenuCategories(MENU_LIST_PARAMS);
   const itemsQuery = useMenuItems(itemListParams);
@@ -823,8 +884,15 @@ export function MenuAvailabilityProvider({
   );
 
   const apiItems = useMemo(
-    () => (itemsQuery.data?.items ?? []).map((item) => toAvailabilityItem(item, categoryNameById)),
-    [itemsQuery.data?.items, categoryNameById],
+    () =>
+      (itemsQuery.data?.items ?? []).map((item) =>
+        toAvailabilityItem(
+          item,
+          categoryNameById,
+          pageConfig.scope === 'branch' ? overlayByMenuItemId.get(item.id) : undefined,
+        ),
+      ),
+    [itemsQuery.data?.items, categoryNameById, overlayByMenuItemId, pageConfig.scope],
   );
 
   const categories = apiCategories;
@@ -920,7 +988,8 @@ export function MenuAvailabilityProvider({
         setListPage(1);
       },
       toggleItemMark: async (itemId, nextActive) => {
-        const numericId = Number(itemId);
+        const row = items.find((entry) => entry.id === itemId);
+        const numericId = row?.menuItemId ?? Number(itemId);
         if (!Number.isFinite(numericId) || numericId <= 0) {
           throw new ApiError('Invalid menu item id.', 400);
         }
@@ -928,6 +997,10 @@ export function MenuAvailabilityProvider({
         await setMenuItemActive.mutateAsync({
           itemId: numericId,
           active: nextActive,
+          catalogueScope: row?.catalogueScope,
+          branchMenuItemId: row?.branchMenuItemId,
+          branchId: branchIdForList,
+          assignmentId: branchMenuAssignment?.id,
         });
 
         const nextMark: ItemAvailabilityMark = nextActive ? 'available' : '86d';
