@@ -33,6 +33,9 @@ export const availabilityItemSchema = z.object({
   tag: z.string().min(1),
   tags: z.array(z.string()).default([]),
   isHidden: z.boolean().default(false),
+  menuItemId: z.number().int().positive().optional(),
+  branchMenuItemId: z.number().int().positive().optional(),
+  catalogueScope: z.enum(['company', 'branch']).optional(),
 });
 
 export const availabilityChannelSchema = z.object({

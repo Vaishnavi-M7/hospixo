@@ -407,6 +407,39 @@ export function restaurantBranchMenuTreePath(
   return `${restaurantBranchMenuAssignmentPath(branchId, assignmentId)}/tree`;
 }
 
+/** GET/PATCH …/branches/{branch_id}/menus/{assignment_id}/items */
+export function restaurantBranchMenuItemsPath(
+  branchId: number | string,
+  assignmentId: number | string,
+): string {
+  return `${restaurantBranchMenuAssignmentPath(branchId, assignmentId)}/items`;
+}
+
+export function restaurantBranchMenuItemPath(
+  branchId: number | string,
+  assignmentId: number | string,
+  branchMenuItemId: number | string,
+): string {
+  return `${restaurantBranchMenuItemsPath(branchId, assignmentId)}/${encodeURIComponent(String(branchMenuItemId))}`;
+}
+
+/** POST …/items/{branch_menu_item_id}/activate | …/deactivate */
+export function restaurantBranchMenuItemActivatePath(
+  branchId: number | string,
+  assignmentId: number | string,
+  branchMenuItemId: number | string,
+): string {
+  return `${restaurantBranchMenuItemPath(branchId, assignmentId, branchMenuItemId)}/activate`;
+}
+
+export function restaurantBranchMenuItemDeactivatePath(
+  branchId: number | string,
+  assignmentId: number | string,
+  branchMenuItemId: number | string,
+): string {
+  return `${restaurantBranchMenuItemPath(branchId, assignmentId, branchMenuItemId)}/deactivate`;
+}
+
 /** GET/POST /v1/restaurant/gst-rates */
 export function restaurantGstRatesPath(): string {
   return ApiUrlsV1.restaurant.gstRates;

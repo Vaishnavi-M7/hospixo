@@ -11,8 +11,14 @@ import {
 } from '@/lib/helpers/createMenuItemV2Body';
 import {
   buildMenuItemStatusChangeBody,
+  resolveMenuBranchIdFromStore,
   type MenuCataloguePageScope,
 } from '@/lib/helpers/menuBranchContext';
+import {
+  planMenuItemStatusMutation,
+  type MenuItemStatusMutationInput,
+} from '@/lib/helpers/menu/menuItemStatusMutation';
+import type { CatalogueScope } from '@/lib/schemas/menu/menuCategoriesSchema';
 import type { CreateMenuItemFormValues } from '@/lib/schemas/menu/menuCreationSchema';
 import {
   parseMenuItemList,
@@ -23,7 +29,6 @@ import {
 } from '@/lib/schemas/menu/menuItemsSchema';
 import { api } from '@/services/api/browserClient';
 import {
-  restaurantMenuItemActivatePath,
   restaurantMenuItemDeactivatePath,
   restaurantMenuItemPath,
   restaurantMenuItemsPath,
@@ -192,26 +197,66 @@ export function useUpdateMenuItem(options?: UseMenuItemMutationsOptions) {
   });
 }
 
+export type SetMenuItemActiveVariables = Readonly<{
+  itemId: number;
+  active: boolean;
+  catalogueScope?: CatalogueScope;
+  branchMenuItemId?: number;
+  branchId?: number;
+  assignmentId?: number;
+}>;
+
 /**
  * Activate or deactivate a menu item (Menu Availability toggle).
- * POST .../items/{id}/activate | .../deactivate
+ * Company scope: POST /v1/restaurant/menu/items/{menu_item_id}/activate|deactivate.
+ * Branch scope + inherited company item: POST …/branches/…/items/{branch_menu_item_id}/activate|deactivate.
  */
 export function useSetMenuItemActive(options?: UseMenuItemMutationsOptions) {
   const invalidateAfterWrite = useQueryInvalidation();
   const pageScope = options?.scope;
 
   return useMutation({
-    mutationFn: async ({ itemId, active }: { itemId: number; active: boolean }) => {
-      const path = active
-        ? restaurantMenuItemActivatePath(itemId)
-        : restaurantMenuItemDeactivatePath(itemId);
-      const body = buildMenuItemStatusChangeBody(pageScope);
-      await api.post(path, body);
+    mutationFn: async (variables: SetMenuItemActiveVariables) => {
+      const branchId =
+        variables.branchId ??
+        (pageScope === 'branch' ? resolveMenuBranchIdFromStore() : undefined);
+
+      const planInput: MenuItemStatusMutationInput = {
+        pageScope,
+        active: variables.active,
+        itemId: variables.itemId,
+        catalogueScope: variables.catalogueScope,
+        branchMenuItemId: variables.branchMenuItemId,
+        branchId,
+        assignmentId: variables.assignmentId,
+      };
+
+      const plan = planMenuItemStatusMutation(planInput);
+      if (plan.kind === 'branch-overlay') {
+        await api.post(plan.path, plan.body);
+        return;
+      }
+
+      const body =
+        Object.keys(plan.body).length > 0
+          ? plan.body
+          : buildMenuItemStatusChangeBody(pageScope);
+      await api.post(plan.path, body);
     },
     onSuccess: async (_data, variables) => {
-      await invalidateAfterWrite({
-        queryKeys: [['restaurant', 'menu-items'], menuItemQueryKey(variables.itemId)],
-      });
+      const keys: (readonly unknown[])[] = [
+        ['restaurant', 'menu-items'],
+        menuItemQueryKey(variables.itemId),
+      ];
+      if (variables.branchId != null && variables.assignmentId != null) {
+        keys.push([
+          'restaurant',
+          'branch-menu-items',
+          variables.branchId,
+          variables.assignmentId,
+        ]);
+      }
+      await invalidateAfterWrite({ queryKeys: keys });
     },
   });
 }

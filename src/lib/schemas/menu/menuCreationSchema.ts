@@ -73,6 +73,11 @@ export const menuCatalogItemSchema = z.object({
   imageUrl: z.string().url().optional(),
   orderTypes: z.array(z.string()),
   tags: z.array(z.string()).default([]),
+  /** Company master id (same as `id` for company list; explicit for branch merge). */
+  menuItemId: z.number().int().positive().optional(),
+  /** BranchMenuItem overlay id — use for branch activate/deactivate on inherited company items. */
+  branchMenuItemId: z.number().int().positive().optional(),
+  catalogueScope: z.enum(['company', 'branch']).optional(),
 });
 
 export const menuPageConfigSchema = z.object({
